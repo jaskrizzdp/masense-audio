@@ -23,6 +23,7 @@ from datasets.signalmixer import SignalMixer
 
 class AudioAutoencoder:
 
+    # all dataset = "https://zenodo.org/records/3384388"
     url_fanaudio = "https://zenodo.org/records/3384388/files/-6_dB_fan.zip?download=1"
     fs = 16000
 
