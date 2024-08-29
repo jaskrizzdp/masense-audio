@@ -231,7 +231,7 @@ def __resample_convert_wav(self, folder_in, folder_out, sr=16000, ext='.flac'):
             for filename in sorted(filenames):
                 if filename.endswith(ext):
                     total_count += 1
-        print(f"Total number of speech files to convert to 1-sec .wav: {total_count}")
+        print(f"Total number of speech files to convert to 2-sec .wav: {total_count}")
         converted_count = 0
         # segment each audio file to 1-sec frames and save
         for (dirpath, _, filenames) in os.walk(folder_in):
@@ -250,17 +250,9 @@ def __resample_convert_wav(self, folder_in, folder_out, sr=16000, ext='.flac'):
                     chunk_start = 0
                     frame_count = 0
 
-                    # The beginning of an utterance is detected when the average
-                    # of absolute values of 128-sample chunks is above a threshold.
-                    # Then, a segment is formed from 30*128 samples before the beginning
-                    # of the utterance to 98*128 samples after that.
-                    # This 1 second (16384 samples) audio segment is converted to .wav
-                    # and saved in librispeech folder together with other keywords to
-                    # be used as the unknown class.
-
                     precursor_len = 30 * 128
-                    postcursor_len = 98 * 128
-                    utterance_threshold = 30
+                    postcursor_len = 196 * 128
+                    normal_threshold = 30
 
                     while True:
                         if chunk_start + postcursor_len > len(data):
@@ -271,7 +263,7 @@ def __resample_convert_wav(self, folder_in, folder_out, sr=16000, ext='.flac'):
                         avg = 1000 * np.average(abs(chunk))
                         i += 128
 
-                        if avg > utterance_threshold and chunk_start >= precursor_len:
+                        if avg > normal_threshold and chunk_start >= precursor_len:
                             print(f"\r Converting {converted_count + 1}/{total_count} "
                                   f"to {frame_count + 1} segments", end=" ")
                             frame = data[chunk_start - precursor_len:chunk_start + postcursor_len]
