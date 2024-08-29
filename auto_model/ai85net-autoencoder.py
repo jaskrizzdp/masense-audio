@@ -65,12 +65,12 @@ class AI85AutoEncoder(CNN_BASE):
 
     Input Shape: [BATCH_SZ, FFT_LEN, N_AXES] -> [BATCH_SZ, 256, 3] = [N, N_CHANNELS, SIGNAL_LEN]
     """
-
+class AI85AutoEncoder(CNN_BASE):
     def __init__(self,
                  num_channels=256,
-                 dimensions=None,  # pylint: disable=unused-argument
-                 num_classes=1,  # pylint: disable=unused-argument
-                 n_axes=3,
+                 dimensions=None,
+                 num_classes=1,
+                 n_axes=8,
                  bias=True,
                  weight_init="kaiming",
                  batchNorm=True,
@@ -79,56 +79,40 @@ class AI85AutoEncoder(CNN_BASE):
 
         super().__init__()
 
-        print("Batchnorm setting in model = ", batchNorm)
-
         weight_init = weight_init.lower()
         assert weight_init in ('kaiming', 'xavier', 'glorot')
 
-        # Num channels is equal to the length of FFTs here
+        # Adjust num_channels as necessary for your specific case
         self.num_channels = num_channels
         self.n_axes = n_axes
 
         S = 1
         P = 0
 
-        # ----- DECODER ----- #
-        # Kernel in 1st layer looks at 1 axis at a time. Output width = input width
+        # Decoder Layers
         n_in = num_channels
         n_out = 128
-        if batchNorm:
-            self.en_conv1 = ai8x.FusedConv1dBNReLU(n_in, n_out, 1, stride=S, padding=P, dilation=1,
-                                                   bias=bias, batchnorm='Affine', **kwargs)
-        else:
-            self.en_conv1 = ai8x.FusedConv1dReLU(n_in, n_out, 1, stride=S, padding=P, dilation=1,
-                                                 bias=bias, **kwargs)
+        self.en_conv1 = ai8x.FusedConv1dReLU(n_in, n_out, 1, stride=S, padding=P, dilation=1, bias=bias, batchnorm='Affine', **kwargs)
         self.layer1_n_in = n_in
         self.layer1_n_out = n_out
 
-        # Kernel in 2nd layer looks at 3 axes at once. Output Width = 1. Depth=n_out
         n_in = n_out
         n_out = 64
-        if batchNorm:
-            self.en_conv2 = ai8x.FusedConv1dBNReLU(n_in, n_out, 3, stride=S, padding=P, dilation=1,
-                                                   bias=bias, batchnorm='Affine', **kwargs)
-        else:
-            self.en_conv2 = ai8x.FusedConv1dReLU(n_in, n_out, 3, stride=S, padding=P, dilation=1,
-                                                 bias=bias, **kwargs)
+        self.en_conv2 = ai8x.FusedConv1dReLU(n_in, n_out, 3, stride=S, padding=P, dilation=1, bias=bias, batchnorm='Affine', **kwargs)
         self.layer2_n_in = n_in
         self.layer2_n_out = n_out
 
         n_in = n_out
         n_out = 32
         self.en_lin1 = ai8x.FusedLinearReLU(n_in, n_out, bias=bias, **kwargs)
-        # ----- END OF DECODER ----- #
 
-        # ---- BOTTLENECK ---- #
+        # Bottleneck
         n_in = n_out
         self.bottleNeckDim = bottleNeckDim
         n_out = self.bottleNeckDim
         self.en_lin2 = ai8x.Linear(n_in, n_out, bias=0, **kwargs)
-        # ---- END OF BOTTLENECK ---- #
 
-        # ----- ENCODER ----- #
+        # Encoder Layers
         n_in = n_out
         n_out = 32
         self.de_lin1 = ai8x.FusedLinearReLU(n_in, n_out, bias=bias, **kwargs)
@@ -138,14 +122,12 @@ class AI85AutoEncoder(CNN_BASE):
         self.de_lin2 = ai8x.FusedLinearReLU(n_in, n_out, bias=bias, **kwargs)
 
         n_in = n_out
-        n_out = num_channels*n_axes
+        n_out = num_channels * n_axes
         self.out_lin = ai8x.Linear(n_in, n_out, bias=0, **kwargs)
-        # ----- END OF ENCODER ----- #
 
         self.initWeights(weight_init)
 
     def forward(self, x, return_bottleneck=False):
-        """Forward prop"""
         x = self.en_conv1(x)
         x = self.en_conv2(x)
         x = x.view(x.shape[0], x.shape[1])
@@ -161,7 +143,6 @@ class AI85AutoEncoder(CNN_BASE):
         x = x.view(x.shape[0], self.num_channels, self.n_axes)
 
         return x
-
 
 def ai85autoencoder(pretrained=False, **kwargs):
     """
