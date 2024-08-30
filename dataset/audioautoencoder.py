@@ -58,10 +58,23 @@ def __init__(self, root, classes, d_type, t_type, transform=None, quantization_s
     self.data, self.targets, self.data_type, self.shift_limits = \
         torch.load(os.path.join(self.processed_folder, self.data_file))
 
+<<<<<<< Updated upstream
     print(f'\nProcessing {self.d_type}...')
     self.__filter_dtype()
 
     self.__filter_classes()
+=======
+# HEAD
+		filename = "fanaudio"
+		self.__download_and_extract_archive(self.url_fanaudio,
+											download_root=self.raw_folder,
+											filename=filename)
+		filename = "-6_dB_fan.zip"
+		self.__download_and_extract_archive(self.url_fanaudio,
+						download_root=self.raw_folder,
+						filename=filename)
+# 7ad98a40ea0c47c2baa6dd97a862d7ba568d0f2b
+>>>>>>> Stashed changes
 
 @property
 def raw_folder(self):
