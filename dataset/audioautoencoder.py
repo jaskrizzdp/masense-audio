@@ -212,163 +212,128 @@ class AudioAutoencoder:
 	def __check_md5(self, fpath, md5, **kwargs):
 		return md5 == self.__calculate_md5(fpath, **kwargs)
 
-def __check_integrity(self, fpath, md5=None):
-        if not os.path.isfile(fpath):
-            return False
-        if md5 is None:
-            return True
-        return self.__check_md5(fpath, md5)
+	def __check_integrity(self, fpath, md5=None):
+		if not os.path.isfile(fpath):
+			return False
+		if md5 is None:
+			return True
+		return self.__check_md5(fpath, md5)
+	
+	def chunk_data(self, data, chunk_size=16384):
+		"""
+		Splits data into chunks
 
-def __extract_archive(self, from_path,
-                          to_path=None, remove_finished=False):
-        if to_path is None:
-            to_path = os.path.dirname(from_path)
+		Parameters;
+		DATA: list or array to be chunked
+		CHUNK_SIZE: size of chunk
 
-        if from_path.endswith('.tar.gz'):
-            with tarfile.open(from_path, 'r:gz') as tar:
-                tar.extractall(path=to_path, filter='data')
-        elif from_path.endswith('.zip'):
-            with ZipFile(from_path) as archive:
-                archive.extractall(to_path)
-        else:
-            raise ValueError(f"Extraction of {from_path} not supported")
+		"""
+		dataLen = len(data)
+		chunkedData = []
 
-        if remove_finished:
-            os.remove(from_path)
+		for i in range(0, dataLen, chunk_size):
+			if (i + chunk_size) <= dataLen:
+				chunkedData.append(data[i:i + chunk_size])
+			else:
+				chunkedData.append(data[i:])
 
-def __download_and_extract_archive(self, url, download_root, extract_root=None, filename=None,
-                                       md5=None, remove_finished=False):
-        download_root = os.path.expanduser(download_root)
-        if extract_root is None:
-            extract_root = download_root
-        if not filename:
-            filename = os.path.basename(url)
+		return np.array(chunkedData)
+	
+	def __gen_datasets(self):
+		# Load base_directory list
+		dirs = sorted(glob.glob(os.path.join(self.raw_folder, "fan", "id_00")))
 
-        self.__download_url(url, download_root, filename, md5)
+		# Loop over the base directory
+		for dir_idx, target_dir in enumerate(dirs):
+			print("\n===========================")
+			print("[{num}/{total}] {dirname}".format(dirname=target_dir, num=dir_idx + 1, total=len(dirs)))
 
-        archive = os.path.join(download_root, filename)
-        print(f"Extracting {archive} to {extract_root}")
-        self.__extract_archive(archive, extract_root, remove_finished)
+			# Dataset parameters
+			db = os.path.split(os.path.split(os.path.split(target_dir)[0])[0])[1]
+			machine_type = os.path.split(os.path.split(target_dir)[0])[1]
+			machine_id = os.path.split(target_dir)[1]
 
-def __resample_convert_wav(self, folder_in, folder_out, sr=16000, ext='.flac'):
-        # create output folder
-        self.__makedir_exist_ok(folder_out)
+			train_pickle = "{pickle}/train_{machine_type}_{machine_id}_{db}.pickle".format(
+				pickle=self.processed_folder,
+				machine_type=machine_type,
+				machine_id=machine_id,
+				db=db
+			)
+			train_labels_pickle = "{pickle}/train_labels_{machine_type}_{machine_id}_{db}.pickle".format(
+				pickle=self.processed_folder,
+				machine_type=machine_type,
+				machine_id=machine_id,
+				db=db
+			)
+			eval_files_pickle = "{pickle}/eval_files_{machine_type}_{machine_id}_{db}.pickle".format(
+				pickle=self.processed_folder,
+				machine_type=machine_type,
+				machine_id=machine_id,
+				db=db
+			)
+			eval_labels_pickle = "{pickle}/eval_labels_{machine_type}_{machine_id}_{db}.pickle".format(
+				pickle=self.processed_folder,
+				machine_type=machine_type,
+				machine_id=machine_id,
+				db=db
+			)
 
-        # find total number of files to convert
-        total_count = 0
-        for (dirpath, _, filenames) in os.walk(folder_in):
-            for filename in sorted(filenames):
-                if filename.endswith(ext):
-                    total_count += 1
-        print(f"Total number of speech files to convert to 2-sec .wav: {total_count}")
-        converted_count = 0
-        # segment each audio file to 1-sec frames and save
-        for (dirpath, _, filenames) in os.walk(folder_in):
-            for filename in sorted(filenames):
+			# Dataset generator
+			print("============== DATASET_GENERATOR ==============")
+			if os.path.exists(train_pickle) and os.path.exists(eval_files_pickle) and os.path.exists(eval_labels_pickle):
+				if self.d_type == "train":
+					self.data = load_pickle(train_pickle)
+					self.labels = load_pickle(train_labels_pickle)
+				else:
+					self.data = load_pickle(eval_files_pickle)
+					self.labels = load_pickle(eval_labels_pickle)
+				print(type(self.data))
+			else:
+				train_files, train_labels, eval_files, eval_labels = dataset_generator(target_dir)
+				train_data = list_to_vector_array(
+					train_files,
+					msg="generate train_dataset",
+					n_mels=param["feature"]["n_mels"],
+					frames=param["feature"]["frames"],
+					n_fft=param["feature"]["n_fft"],
+					hop_length=param["feature"]["hop_length"],
+					power=param["feature"]["power"])
 
-                i = 0
-                if filename.endswith(ext):
-                    fname = os.path.join(dirpath, filename)
-                    data, sr_original = sf.read(fname, dtype='float32')
-                    assert sr_original == sr
+				# Chunking
+				chunk_size = 16384
+				train_data_chunks = self.chunk_data(train_data, chunk_size)
+				train_label_chunks = self.chunk_data(train_labels, chunk_size)
 
-                    # normalize data
-                    mx = np.amax(abs(data))
-                    data = data / mx
+				if self.d_type == "train":
+					self.data = train_data_chunks
+					self.labels = train_label_chunks
 
-                    chunk_start = 0
-                    frame_count = 0
+					save_pickle(train_pickle, train_data_chunks)
+					save_pickle(train_labels_pickle, train_label_chunks)
 
-                    precursor_len = 30 * 128
-                    postcursor_len = 196 * 128
-                    normal_threshold = 30
+				else:
+					eval_data = []
+					for num, file_name in tqdm(enumerate(eval_files), total=len(eval_files)):
+						try:
+							data = file_to_vector_array(
+								file_name,
+								n_mels=param["feature"]["n_mels"],
+								frames=param["feature"]["frames"],
+								n_fft=param["feature"]["n_fft"],
+								hop_length=param["feature"]["hop_length"],
+								power=param["feature"]["power"])
+							eval_data.append(data)
+						except:
+							print("File broken!!: {}".format(file_name))
 
-                    while True:
-                        if chunk_start + postcursor_len > len(data):
-                            break
+					eval_data_chunks = self.chunk_data(eval_data, chunk_size)
+					eval_label_chunks = self.chunk_data(eval_labels, chunk_size)
 
-                        chunk = data[chunk_start: chunk_start + 128]
-                        # scaled average over 128 samples
-                        avg = 1000 * np.average(abs(chunk))
-                        i += 128
+					save_pickle(eval_files_pickle, eval_data_chunks)
+					save_pickle(eval_labels_pickle, eval_label_chunks)
 
-                        if avg > normal_threshold and chunk_start >= precursor_len:
-                            print(f"\r Converting {converted_count + 1}/{total_count} "
-                                  f"to {frame_count + 1} segments", end=" ")
-                            frame = data[chunk_start - precursor_len:chunk_start + postcursor_len]
-
-                            outfile = os.path.join(folder_out, filename[:-5] + '_' +
-                                                   str(f"{frame_count}") + '.wav')
-                            sf.write(outfile, frame, sr)
-
-                            chunk_start += postcursor_len
-                            frame_count += 1
-                        else:
-                            chunk_start += 128
-                    converted_count += 1
-                else:
-                    pass
-        print(f'\rFile conversion completed: {converted_count} files ')
-
-def __filter_dtype(self):
-    if self.d_type == 'train':
-        idx_to_select = (self.data_type == self.TRAIN)[:, -1]
-    elif self.d_type == 'test':
-        idx_to_select = (self.data_type == self.TEST)[:, -1]
-    else:
-        print(f'Unknown data type: {self.d_type}')
-        return
-
-    set_size = idx_to_select.sum()
-    print(f'{self.d_type} set: {set_size} elements')
-
-    # Filter the data
-    self.data = self.data[idx_to_select, :]
-    self.targets = self.targets[idx_to_select, :]
-    self.data_type = self.data_type[idx_to_select, :]
-    self.shift_limits = self.shift_limits[idx_to_select, :]
-
-    # For training, include validation data if it exists
-    if self.d_type == 'train':
-        idx_to_select = (self.data_type_original == self.VALIDATION)[:, -1]
-        if idx_to_select.sum() > 0:
-            self.data = torch.cat((self.data, self.data_original[idx_to_select, :]), dim=0)
-            self.targets = torch.cat((self.targets, self.targets_original[idx_to_select, :]), dim=0)
-            self.data_type = torch.cat((self.data_type, self.data_type_original[idx_to_select, :]), dim=0)
-            self.shift_limits = torch.cat((self.shift_limits, self.shift_limits_original[idx_to_select, :]), dim=0)
-            self.valid_indices = range(set_size, set_size + idx_to_select.sum())
-            print(f'validation set: {idx_to_select.sum()} elements')
-
-    # Clean up
-    del self.data_original
-    del self.targets_original
-    del self.data_type_original
-    del self.shift_limits_original
-
-def __filter_classes(self):
-    # Ensure only normal class and possibly an unknown class
-    if len(self.class_dict) > 2:
-        raise ValueError('More than two classes detected. This method is for one-class classification.')
-    
-    new_class_label = 0
-    # Re-label normal class
-    for c in self.classes:
-        if c not in self.class_dict:
-            if c == '_unknown_':
-                continue
-            raise ValueError(f'Class {c} not found in data')
-        
-        if c != '_unknown_':
-            num_elems = (self.targets == self.class_dict[c]).cpu().sum()
-            print(f'Class {c} (# {self.class_dict[c]}): {num_elems} elements')
-            self.targets[(self.targets == self.class_dict[c])] = new_class_label
-            new_class_label += 1
-
-    # Handle unknown class if necessary
-    num_elems = (self.targets < len(self.class_dict)).cpu().sum()
-    print(f'Class _unknown_: {num_elems} elements')
-    self.targets[(self.targets < len(self.class_dict))] = new_class_label
-    self.targets -= len(self.class_dict)
+					self.data = eval_data_chunks
+					self.labels = eval_label_chunks
 
 	def __len__(self):
 			if self.d_type == "train":
@@ -376,156 +341,97 @@ def __filter_classes(self):
 			else:
 				return len(self.data)
 
-def __reshape_audio(self, audio, row_len=128):
-        # add overlap if necessary later on
-        return torch.transpose(audio.reshape((-1, row_len)), 1, 0)
+	def __getitem__(self, index):
+			if self.d_type == "train":
+				dat = self.data[:, index]
+			else:
+				dat = self.data[index]
+			label = self.labels[index]
 
-@staticmethod
-def quantize_audio(data, num_bits=8, compand=False, mu=255):
-    """Quantize audio data to a specified bit-depth for AI8x training."""
-    
-    # Apply companding if required
-    if compand:
-        data = AudioAutoencoder.compand(data, mu)
+			return torch.as_tensor(dat, dtype=torch.float32), torch.tensor(label)
 
-    # Compute quantization step size and maximum value based on num_bits
-    step_size = 2.0 / (2 ** num_bits)
-    max_val = 2 ** num_bits - 1
-    
-    # Quantize data
-    q_data = np.round((data + 1.0) / step_size)
-    q_data = np.clip(q_data, 0, max_val)
+def dataset_generator(target_dir, normal_dir_name="normal", abnormal_dir_name="abnormal", ext='wav'):
+	print("target_dir : {}".format(target_dir))
+		
+	normal_files = sorted(glob.glob(os.path.abspath("{dir}/{normal_dir_name}/*.{ext}".format(dir=target_dir, normal_dir_name=normal_dir_name, ext=ext))))
+	normal_labels = np.zeros(len(normal_files))
+	if len(normal_files) == 0:
+		print("no_wav_data!!")
 
-    # Re-expand if companding was applied
-    if compand:
-        data_ex = (q_data - 2 ** (num_bits - 1)) / 2 ** (num_bits - 1)
-        data_ex = AudioAutoencoder.expand(data_ex)
-        q_data = np.round((data_ex + 1.0) / step_size)
-        q_data = np.clip(q_data, 0, max_val)
+	abnormal_files = sorted(glob.glob(os.path.abspath("{dir}/{abnormal_dir_name}/*.{ext}".format(dir=target_dir, abnormal_dir_name=abnormal_dir_name, ext=ext))))
+	abnormal_labels = np.ones(len(abnormal_files))
+	if len(abnormal_files) == 0:
+		print("no_wav_data!!")
 
-    # Return as uint8 for compatibility with AI8x training requirements
-    return np.uint8(q_data)
-def speed_augment(self, audio, fs, sample_no=0):
-        """Augments audio by randomly changing the speed of the audio.
-        The generated coefficient follows 0.9, 1.1, 0.95, 1.05... pattern
-        """
-        speed_multiplier = 1.0 + 0.2 * (sample_no % 2 - 0.5) / (1 + sample_no // 2)
+		
+	train_files = normal_files[len(abnormal_files):]
+	train_labels = normal_labels[len(abnormal_files):]
+	eval_files = np.concatenate((normal_files[:len(abnormal_files)], abnormal_files), axis=0)
+	eval_labels = np.concatenate((normal_labels[:len(abnormal_files)], abnormal_labels), axis=0)
+	print("train_file num : {num}".format(num=len(train_files)))
+	print("eval_file  num : {num}".format(num=len(eval_files)))
 
-        sox_effects = [["speed", str(speed_multiplier)], ["rate", str(fs)]]
-        aug_audio, _ = torchaudio.sox_effects.apply_effects_tensor(
-            torch.unsqueeze(torch.from_numpy(audio).float(), dim=0), fs, sox_effects)
-        aug_audio = aug_audio.numpy().squeeze()
+	return train_files, train_labels, eval_files, eval_labels
 
-        return aug_audio, speed_multiplier
+def file_load(wav_name, mono=False):
+	try:
+		return librosa.load(wav_name, sr=None, mono=mono)
+	except:
+		print("file_broken or not exists!! : {}".format(wav_name))
 
-def speed_augment_multiple(self, audio, fs, exp_len, n_augment):
-    """Calls `speed_augment` function for n_augment times for given audio data.
-    Finally the original audio is added to have (n_augment+1) audio data.
-    """
-    aug_audio = [None] * (n_augment + 1)
-    aug_speed = np.ones((n_augment + 1,))
-    shift_limits = np.zeros((n_augment + 1, 2))
-    voice_begin_idx, voice_end_idx = self.get_audio_endpoints(audio, fs)
-    aug_audio[0] = audio
-    for i in range(n_augment):
-        aug_audio[i+1], aug_speed[i+1] = self.speed_augment(audio, fs, sample_no=i)
-    for i in range(n_augment + 1):
-        if len(aug_audio[i]) < exp_len:
-            aug_audio[i] = np.pad(aug_audio[i], (0, exp_len - len(aug_audio[i])), 'constant')
-        aug_begin_idx = voice_begin_idx * aug_speed[i]
-        aug_end_idx = voice_end_idx * aug_speed[i]
-        if aug_end_idx - aug_begin_idx <= exp_len:
-            segment_begin = max(aug_end_idx, exp_len) - exp_len
-            segment_end = max(aug_end_idx, exp_len)
-            aug_audio[i] = aug_audio[i][segment_begin:segment_end]
-            shift_limits[i, 0] = -aug_begin_idx + (max(aug_end_idx, exp_len) - exp_len)
-            shift_limits[i, 1] = max(aug_end_idx, exp_len) - aug_end_idx
-        else:
-            midpoint = (aug_begin_idx + aug_end_idx) // 2
-            aug_audio[i] = aug_audio[i][midpoint - exp_len // 2: midpoint + exp_len // 2]
-            shift_limits[i, :] = [0, 0]
-    return aug_audio, aug_speed, shift_limits
+def demux_wav(wav_name, channel=0):
+	try:
+		multi_channel_data, sr = file_load(wav_name)
+		if multi_channel_data.ndim <= 1:
+			return sr, multi_channel_data
+			
+		return sr, np.array(multi_channel_data)[channel, :]
+		
+	except ValueError as msg:
+		print(f'{msg}')
 
+def file_to_vector_array(file_name, n_mels=64, frames=5, n_fft=1024, hop_length=512, power=2.0):
+	dims = n_mels * frames
+	sr, y = demux_wav(file_name)
 
-def __gen_datasets(self, exp_len=16384):
-    print('Generating dataset from raw data samples for the first time.')
-    print('This process may take a few minutes.')
-    with warnings.catch_warnings():
-        warnings.simplefilter('error')
+	mel_spectrogram = librosa.feature.melspectrogram(y=y, sr=sr, n_fft=n_fft, hop_length=hop_length, n_mels=n_mels, power=power)
+	log_mel_spectrogram = 20.0 / power * np.log10(mel_spectrogram + sys.float_info.epsilon)
+	vectorarray_size = len(log_mel_spectrogram[0, :]) - frames + 1
 
-        # Assuming you have only one class
-        labels = [d for d in os.listdir(self.raw_folder) if os.path.isdir(os.path.join(self.raw_folder, d))]
-        
-        # If you only have one class, adjust label processing
-        if len(labels) != 1:
-            raise ValueError("Expected exactly one class folder, found: {}".format(len(labels)))
+	if vectorarray_size < 1:
+		return np.empty((0, dims), float)
+		
+	vectorarray = np.zeros((vectorarray_size, dims), float)
+	for t in range(frames):
+		vectorarray[:, n_mels * t: n_mels * (t + 1)] = log_mel_spectrogram[:, t: t + vectorarray_size].T
 
-        label = labels[0]
-        print(f'Processing the label: {label}')
+	return vectorarray
 
-        record_list = sorted(os.listdir(os.path.join(self.raw_folder, label)))
-        record_len = len(record_list)
+def list_to_vector_array(file_list, msg="calc...", n_mels=64, frames=5, n_fft=1024, hop_length=512, power=2.0):
+	dims = n_mels * frames
 
-        # Create arrays to store data
-        number_of_total_samples = record_len * (self.augmentation['aug_num'] + 1)
-        if not self.save_unquantized:
-            data_in = np.empty((number_of_total_samples, exp_len), dtype=np.uint8)
-        else:
-            data_in = np.empty((number_of_total_samples, exp_len), dtype=np.float32)
+	for idx in tqdm(range(len(file_list)), desc=msg):
+		vector_array = file_to_vector_array(file_list[idx], n_mels=n_mels, frames=frames, n_fft=n_fft, hop_length=hop_length, power=power)
 
-        data_shift_limits = np.empty((number_of_total_samples, 2), dtype=np.int16)
-        data_class = np.full((number_of_total_samples, 1), 0, dtype=np.uint8)
+		if idx == 0:
+			dataset = np.zeros((vector_array.shape[0] * len(file_list), dims), float)
+		dataset[vector_array.shape[0] * idx: vector_array.shape[0] * (idx + 1), :] = vector_array
 
-        time_s = time.time()
+	return dataset
+	
+def save_pickle(filename, save_data):
+	print("save_pickle -> {}".format(filename))
+	with open(filename, 'wb') as sf:
+		pickle.dump(save_data, sf)
 
-        sample_index = 0
-        for r, record_name in enumerate(record_list):
-            if r % 1000 == 0:
-                print(f'\t{r + 1} of {record_len}')
-
-            record_pth = os.path.join(self.raw_folder, label, record_name)
-            record, fs = sf.read(record_pth, dtype='float32')
-
-            # Apply speed augmentations and calculate shift limits
-            audio_seq_list, shift_limits = \
-                self.speed_augment_multiple(record, fs, exp_len, self.augmentation['aug_num'])
-
-            for local_id, audio_seq in enumerate(audio_seq_list):
-                if not self.save_unquantized:
-                    data_in[sample_index] = \
-                        AudioAutoencoder.quantize_audio(audio_seq,
-                                           num_bits=self.quantization['bits'],
-                                           compand=self.quantization['compand'],
-                                           mu=self.quantization['mu'])
-                else:
-                    data_in[sample_index] = audio_seq
-                data_shift_limits[sample_index] = shift_limits[local_id]
-                sample_index += 1
-
-        dur = time.time() - time_s
-        print(f'Finished in {dur:.3f} seconds.')
-        print(data_in.shape)
-
-        data_in = torch.from_numpy(data_in)
-        data_class = torch.from_numpy(data_class)
-        data_shift_limits = torch.from_numpy(data_shift_limits)
-
-        raw_dataset = (data_in, data_class, data_shift_limits)
-        torch.save(raw_dataset, os.path.join(self.processed_folder, self.data_file))
-
-    print('Dataset created.')
-
-def get_datasets(data, load_train=True, load_test=True, dataset_name='OneClass',
-                 quantized=True):
-    """
-    Load dataset for one-class audio classification.
-
-    The dataset is loaded from the archive file, so the file is required for this version.
-    For one-class classification, we use 'normal' as the positive class and '_unknown_' for unknowns.
-
-    Data is augmented to improve robustness to variations. Specific augmentation settings can be customized.
-    """
-    (data_dir, args) = data
+def load_pickle(filename):
+	print("load_pickle <- {}".format(filename))
+	with open(filename, 'rb') as lf:
+		load_data = pickle.load(lf)
+	return load_data
+	
+def get_datasets(data, load_train=True, load_test=True, dataset_name='OneClass', quantized=True):
+	(data_dir, args) = data
 
 	if quantized:
 		transform = transforms.Compose([
@@ -564,12 +470,11 @@ def get_datasets(data, load_train=True, load_test=True, dataset_name='OneClass',
 		return train_dataset, test_dataset
 	
 datasets = [
-     {
-          'name': 'AudioAutoencoder',
-          'input': (128, 128),
-          'output': AudioAutoencoder.dataset_dict['OneClass'],
-          'weight': (1, 1),
-          'loader': get_datasets,
-
-     }
+	{
+		'name': 'AudioAutoencoder',
+		'input': (128, 128),
+		'output': AudioAutoencoder.dataset_dict['OneClass'],
+		'weight': (1, 1),
+		'loader': get_datasets,
+	}
 ]
