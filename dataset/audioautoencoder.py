@@ -234,8 +234,8 @@ class AudioAutoencoder:
 		for i in range(0, dataLen, chunk_size):
 			if (i + chunk_size) <= dataLen:
 				chunkedData.append(data[i:i + chunk_size])
-			else:
-				chunkedData.append(data[i:])
+			# else:
+			# 	chunkedData.append(data[i:])
 
 		return np.array(chunkedData)
 	
@@ -278,7 +278,7 @@ class AudioAutoencoder:
 				db=db
 			)
 
-			# Dataset generator
+			# dataset generator
 			print("============== DATASET_GENERATOR ==============")
 			if os.path.exists(train_pickle) and os.path.exists(eval_files_pickle) and os.path.exists(eval_labels_pickle):
 				if self.d_type == "train":
@@ -290,50 +290,50 @@ class AudioAutoencoder:
 				print(type(self.data))
 			else:
 				train_files, train_labels, eval_files, eval_labels = dataset_generator(target_dir)
-				train_data = list_to_vector_array(
-					train_files,
-					msg="generate train_dataset",
-					n_mels=param["feature"]["n_mels"],
-					frames=param["feature"]["frames"],
-					n_fft=param["feature"]["n_fft"],
-					hop_length=param["feature"]["hop_length"],
-					power=param["feature"]["power"])
-
-				# Chunking
-				chunk_size = 16384
-				train_data_chunks = self.chunk_data(train_data, chunk_size)
-				train_label_chunks = self.chunk_data(train_labels, chunk_size)
-
-				if self.d_type == "train":
-					self.data = train_data_chunks
-					self.labels = train_label_chunks
-
-					save_pickle(train_pickle, train_data_chunks)
-					save_pickle(train_labels_pickle, train_label_chunks)
-
-				else:
-					eval_data = []
-					for num, file_name in tqdm(enumerate(eval_files), total=len(eval_files)):
-						try:
-							data = file_to_vector_array(
-								file_name,
+				train_data = list_to_vector_array(train_files,
+								msg="generate train_dataset",
 								n_mels=param["feature"]["n_mels"],
 								frames=param["feature"]["frames"],
 								n_fft=param["feature"]["n_fft"],
 								hop_length=param["feature"]["hop_length"],
 								power=param["feature"]["power"])
+
+				if self.d_type == "train":
+					self.data = train_data
+					self.labels = train_labels
+
+					save_pickle(train_pickle, train_data)
+					save_pickle(train_labels_pickle, train_labels)
+				else:
+
+					eval_data = []
+					for num, file_name in tqdm(enumerate(eval_files), total=len(eval_files)):
+						try:
+							data = file_to_vector_array(file_name,
+										n_mels=param["feature"]["n_mels"],
+										frames=param["feature"]["frames"],
+										n_fft=param["feature"]["n_fft"],
+										hop_length=param["feature"]["hop_length"],
+										power=param["feature"]["power"])
 							eval_data.append(data)
 						except:
 							print("File broken!!: {}".format(file_name))
 
-					eval_data_chunks = self.chunk_data(eval_data, chunk_size)
-					eval_label_chunks = self.chunk_data(eval_labels, chunk_size)
+					# print("eval_files: ", eval_files)
 
-					save_pickle(eval_files_pickle, eval_data_chunks)
-					save_pickle(eval_labels_pickle, eval_label_chunks)
+					# eval_data = list_to_vector_array(eval_data,
+					# 				msg="generate train_dataset",
+					# 				n_mels=param["feature"]["n_mels"],
+					# 				frames=param["feature"]["frames"],
+					# 				n_fft=param["feature"]["n_fft"],
+					# 				hop_length=param["feature"]["hop_length"],
+					# 				power=param["feature"]["power"])
 
-					self.data = eval_data_chunks
-					self.labels = eval_label_chunks
+					save_pickle(eval_files_pickle, eval_data)
+					save_pickle(eval_labels_pickle, eval_labels)
+
+					self.data = eval_data
+					self.labels = eval_labels
 
 	def __len__(self):
 			if self.d_type == "train":
