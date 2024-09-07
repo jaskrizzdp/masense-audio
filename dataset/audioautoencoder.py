@@ -441,33 +441,33 @@ def get_datasets(data, load_train=True, load_test=True, dataset_name='OneClass',
 	else:
 		transform = None
 
-		classes = AudioAutoencoder.dataset_dict['OneClass']
+	classes = AudioAutoencoder.dataset_dict['OneClass']
 
-		if dataset_name != 'OneClass':
-			raise ValueError(f'Invalid dataset name {dataset_name}. Expected "OneClass".')
-		
-		if quantized:
-			augmentation = {'aug_num': 2, 'shift': {'min': -0.1, 'max': 0.1}, 'snr': {'min': -5.0, 'max': 20.}}
-			quantization_scheme = {'compand': False, 'mu': 10}
-		else:
-			augmentation = {'aug_num': 0, 'shift': {'min': -0.1, 'max': 0.1}, 'snr': {'min': -5.0, 'max': 20.}}
-			quantization_scheme = {'bits': 0}
+	if dataset_name != 'OneClass':
+		raise ValueError(f'Invalid dataset name {dataset_name}. Expected "OneClass".')
+	
+	if quantized:
+		augmentation = {'aug_num': 2, 'shift': {'min': -0.1, 'max': 0.1}, 'snr': {'min': -5.0, 'max': 20.}}
+		quantization_scheme = {'compand': False, 'mu': 10}
+	else:
+		augmentation = {'aug_num': 0, 'shift': {'min': -0.1, 'max': 0.1}, 'snr': {'min': -5.0, 'max': 20.}}
+		quantization_scheme = {'bits': 0}
 
-		if load_train:
-			train_dataset = AudioAutoencoder(root=data_dir, classes=classes, d_type='train', transform=transform, t_type='one_class', quantization_scheme=quantization_scheme, augmentation=augmentation, download=True)
-		else:
-			train_dataset = None
+	if load_train:
+		train_dataset = AudioAutoencoder(root=data_dir, classes=classes, d_type='train', transform=transform, t_type='one_class', quantization_scheme=quantization_scheme, augmentation=augmentation, download=True)
+	else:
+		train_dataset = None
 
-		if load_test:
-			test_dataset = AudioAutoencoder(root=data_dir, classes=classes, d_type='test', transform=transform, t_type='one_class', quantization_scheme=quantization_scheme, augmentation=augmentation, download=True)
+	if load_test:
+		test_dataset = AudioAutoencoder(root=data_dir, classes=classes, d_type='test', transform=transform, t_type='one_class', quantization_scheme=quantization_scheme, augmentation=augmentation, download=True)
 
-			if args.truncate_testset:
-				test_dataset.data = test_dataset.data[:1]
+		if args.truncate_testset:
+			test_dataset.data = test_dataset.data[:1]
 
-		else:
-			test_dataset = None
+	else:
+		test_dataset = None
 
-		return train_dataset, test_dataset
+	return train_dataset, test_dataset
 	
 datasets = [
 	{
