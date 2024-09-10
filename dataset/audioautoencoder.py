@@ -45,7 +45,7 @@ class AudioAutoencoder:
 	TEST = np.uint(1)
 	VALIDATION = np.uint(2)
 
-	def __init__(self, root, classes, d_type, t_type, transform=None, quantization_scheme=None, augmentation=None, download=False, save_unquantized=False):
+	def __init__(self, root, classes, d_type, t_type, transform=None, quantization_scheme=None, augmentation=None, download=False, save_unquantized=False, target_size=(128, 128)):
 
 		self.root = root
 		self.classes = classes
@@ -53,6 +53,8 @@ class AudioAutoencoder:
 		self.t_type = t_type
 		self.transform = transform
 		self.save_unquantized = save_unquantized
+
+		self.target_size = target_size
 
 		self.__parse_quantization(quantization_scheme)
 		self.__parse_augmentation(augmentation)
@@ -219,25 +221,12 @@ class AudioAutoencoder:
 			return True
 		return self.__check_md5(fpath, md5)
 	
-	def chunk_data(self, data, chunk_size=16384):
-		"""
-		Splits data into chunks
-
-		Parameters;
-		DATA: list or array to be chunked
-		CHUNK_SIZE: size of chunk
-
-		"""
-		dataLen = len(data)
-		chunkedData = []
-
-		for i in range(0, dataLen, chunk_size):
-			if (i + chunk_size) <= dataLen:
-				chunkedData.append(data[i:i + chunk_size])
-			else:
-				chunkedData.append(data[i:])
-
-		return np.array(chunkedData)
+	def __reshape_audio(self, audio, row_len=128):
+		if not isinstance(audio, torch.Tensor):
+			audio = torch.tensor(audio, dtype=torch.float32)
+		
+		audio = audio.reshape((-1, row_len)).T
+		return audio
 	
 	def __gen_datasets(self):
 		# Load base_directory list
@@ -278,7 +267,7 @@ class AudioAutoencoder:
 				db=db
 			)
 
-			# Dataset generator
+			# dataset generator
 			print("============== DATASET_GENERATOR ==============")
 			if os.path.exists(train_pickle) and os.path.exists(eval_files_pickle) and os.path.exists(eval_labels_pickle):
 				if self.d_type == "train":
@@ -290,51 +279,42 @@ class AudioAutoencoder:
 				print(type(self.data))
 			else:
 				train_files, train_labels, eval_files, eval_labels = dataset_generator(target_dir)
-				train_data = list_to_vector_array(
-					train_files,
-					msg="generate train_dataset",
-					n_mels=param["feature"]["n_mels"],
-					frames=param["feature"]["frames"],
-					n_fft=param["feature"]["n_fft"],
-					hop_length=param["feature"]["hop_length"],
-					power=param["feature"]["power"])
-
-				# Chunking
-				chunk_size = 16384
-				train_data_chunks = self.chunk_data(train_data, chunk_size)
-				train_label_chunks = self.chunk_data(train_labels, chunk_size)
+				train_data = list_to_vector_array(train_files, target_size=(128, 128))
 
 				if self.d_type == "train":
-					self.data = train_data_chunks
-					self.labels = train_label_chunks
+					self.data = train_data
+					self.labels = train_labels
 
-					save_pickle(train_pickle, train_data_chunks)
-					save_pickle(train_labels_pickle, train_label_chunks)
-
+					save_pickle(train_pickle, train_data)
+					save_pickle(train_labels_pickle, train_labels)
 				else:
+
 					eval_data = []
-					for num, file_name in tqdm(enumerate(eval_files), total=len(eval_files)):
+					for num, file_path in tqdm(enumerate(eval_files), total=len(eval_files)):
 						try:
-							data = file_to_vector_array(
-								file_name,
-								n_mels=param["feature"]["n_mels"],
-								frames=param["feature"]["frames"],
-								n_fft=param["feature"]["n_fft"],
-								hop_length=param["feature"]["hop_length"],
-								power=param["feature"]["power"])
+							data = file_to_vector_array(file_path, target_size=(128, 128))
 							eval_data.append(data)
 						except:
-							print("File broken!!: {}".format(file_name))
+							print("File broken!!: {}".format(file_path))
 
-					eval_data_chunks = self.chunk_data(eval_data, chunk_size)
-					eval_label_chunks = self.chunk_data(eval_labels, chunk_size)
+					# print("eval_files: ", eval_files)
 
-					save_pickle(eval_files_pickle, eval_data_chunks)
-					save_pickle(eval_labels_pickle, eval_label_chunks)
+					# eval_data = list_to_vector_array(eval_data,
+					# 				msg="generate train_dataset",
+					# 				n_mels=param["feature"]["n_mels"],
+					# 				frames=param["feature"]["frames"],
+					# 				n_fft=param["feature"]["n_fft"],
+					# 				hop_length=param["feature"]["hop_length"],
+					# 				power=param["feature"]["power"])
 
-					self.data = eval_data_chunks
-					self.labels = eval_label_chunks
+					save_pickle(eval_files_pickle, eval_data)
+					save_pickle(eval_labels_pickle, eval_labels)
 
+					self.data = eval_data
+					self.labels = eval_labels
+
+	
+	
 	def __len__(self):
 			if self.d_type == "train":
 				return self.data.shape[1]
@@ -342,13 +322,23 @@ class AudioAutoencoder:
 				return len(self.data)
 
 	def __getitem__(self, index):
-			if self.d_type == "train":
-				dat = self.data[:, index]
-			else:
-				dat = self.data[index]
-			label = self.labels[index]
+	
+		inp = self.data[index]
+		target = self.labels[index]
 
-			return torch.as_tensor(dat, dtype=torch.float32), torch.tensor(label)
+        # reshape to 2D
+		inp = self.__reshape_audio(inp)
+		
+		if not self.save_unquantized:
+			inp /= 256
+
+		inp = inp.numpy()
+
+		if self.transform is not None:
+			inp = self.transform(inp)
+		inp = torch.tensor(inp, dtype=torch.float32)
+
+		return inp, target
 
 def dataset_generator(target_dir, normal_dir_name="normal", abnormal_dir_name="abnormal", ext='wav'):
 	print("target_dir : {}".format(target_dir))
@@ -390,34 +380,21 @@ def demux_wav(wav_name, channel=0):
 	except ValueError as msg:
 		print(f'{msg}')
 
-def file_to_vector_array(file_name, n_mels=64, frames=5, n_fft=1024, hop_length=512, power=2.0):
-	dims = n_mels * frames
-	sr, y = demux_wav(file_name)
+def file_to_vector_array(file_path, target_size=(128, 128)):
+	audio, sr = librosa.load(file_path, sr=None)
 
-	mel_spectrogram = librosa.feature.melspectrogram(y=y, sr=sr, n_fft=n_fft, hop_length=hop_length, n_mels=n_mels, power=power)
-	log_mel_spectrogram = 20.0 / power * np.log10(mel_spectrogram + sys.float_info.epsilon)
-	vectorarray_size = len(log_mel_spectrogram[0, :]) - frames + 1
+	num_samples = target_size[0] * target_size[1]
+	if len(audio) < num_samples:
+		audio = np.pad(audio, (0, num_samples - len(audio)), mode='constant')
+	else:
+		audio = audio[:num_samples]
 
-	if vectorarray_size < 1:
-		return np.empty((0, dims), float)
-		
-	vectorarray = np.zeros((vectorarray_size, dims), float)
-	for t in range(frames):
-		vectorarray[:, n_mels * t: n_mels * (t + 1)] = log_mel_spectrogram[:, t: t + vectorarray_size].T
+	audio = audio.reshape(target_size)
+	return audio
 
-	return vectorarray
-
-def list_to_vector_array(file_list, msg="calc...", n_mels=64, frames=5, n_fft=1024, hop_length=512, power=2.0):
-	dims = n_mels * frames
-
-	for idx in tqdm(range(len(file_list)), desc=msg):
-		vector_array = file_to_vector_array(file_list[idx], n_mels=n_mels, frames=frames, n_fft=n_fft, hop_length=hop_length, power=power)
-
-		if idx == 0:
-			dataset = np.zeros((vector_array.shape[0] * len(file_list), dims), float)
-		dataset[vector_array.shape[0] * idx: vector_array.shape[0] * (idx + 1), :] = vector_array
-
-	return dataset
+def list_to_vector_array(file_list, msg="calc...", target_size=(128, 128)):
+	vectors = [file_to_vector_array(file, target_size) for file in file_list]
+	return np.array(vectors)
 	
 def save_pickle(filename, save_data):
 	print("save_pickle -> {}".format(filename))
@@ -441,33 +418,33 @@ def get_datasets(data, load_train=True, load_test=True, dataset_name='OneClass',
 	else:
 		transform = None
 
-		classes = AudioAutoencoder.dataset_dict['OneClass']
+	classes = AudioAutoencoder.dataset_dict['OneClass']
 
-		if dataset_name != 'OneClass':
-			raise ValueError(f'Invalid dataset name {dataset_name}. Expected "OneClass".')
-		
-		if quantized:
-			augmentation = {'aug_num': 2, 'shift': {'min': -0.1, 'max': 0.1}, 'snr': {'min': -5.0, 'max': 20.}}
-			quantization_scheme = {'compand': False, 'mu': 10}
-		else:
-			augmentation = {'aug_num': 0, 'shift': {'min': -0.1, 'max': 0.1}, 'snr': {'min': -5.0, 'max': 20.}}
-			quantization_scheme = {'bits': 0}
+	if dataset_name != 'OneClass':
+		raise ValueError(f'Invalid dataset name {dataset_name}. Expected "OneClass".')
+	
+	if quantized:
+		augmentation = {'aug_num': 2, 'shift': {'min': -0.1, 'max': 0.1}, 'snr': {'min': -5.0, 'max': 20.}}
+		quantization_scheme = {'compand': False, 'mu': 10}
+	else:
+		augmentation = {'aug_num': 0, 'shift': {'min': -0.1, 'max': 0.1}, 'snr': {'min': -5.0, 'max': 20.}}
+		quantization_scheme = {'bits': 0}
 
-		if load_train:
-			train_dataset = AudioAutoencoder(root=data_dir, classes=classes, d_type='train', transform=transform, t_type='one_class', quantization_scheme=quantization_scheme, augmentation=augmentation, download=True)
-		else:
-			train_dataset = None
+	if load_train:
+		train_dataset = AudioAutoencoder(root=data_dir, classes=classes, d_type='train', transform=transform, t_type='one_class', quantization_scheme=quantization_scheme, augmentation=augmentation, download=True)
+	else:
+		train_dataset = None
 
-		if load_test:
-			test_dataset = AudioAutoencoder(root=data_dir, classes=classes, d_type='test', transform=transform, t_type='one_class', quantization_scheme=quantization_scheme, augmentation=augmentation, download=True)
+	if load_test:
+		test_dataset = AudioAutoencoder(root=data_dir, classes=classes, d_type='test', transform=transform, t_type='one_class', quantization_scheme=quantization_scheme, augmentation=augmentation, download=True)
 
-			if args.truncate_testset:
-				test_dataset.data = test_dataset.data[:1]
+		if args.truncate_testset:
+			test_dataset.data = test_dataset.data[:1]
 
-		else:
-			test_dataset = None
+	else:
+		test_dataset = None
 
-		return train_dataset, test_dataset
+	return train_dataset, test_dataset
 	
 datasets = [
 	{
