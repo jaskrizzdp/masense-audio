@@ -312,8 +312,6 @@ class AudioAutoencoder:
 
 					self.data = eval_data
 					self.labels = eval_labels
-
-	
 	
 	def __len__(self):
 			if self.d_type == "train":
