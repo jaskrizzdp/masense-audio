@@ -33,6 +33,11 @@ param = {
 	}
 }
 
+def block_average(data, factor):
+	num_blocks = len(data) // factor
+	data_reshaped = data[:num_blocks * factor].reshape(-1, factor)
+	return data_reshaped.mean(axis=1).astype(np.float32)
+
 class AudioAutoencoder:
 
 	url_fanaudio = "https://zenodo.org/records/3384388/files/-6_dB_fan.zip?download=1"
@@ -221,11 +226,28 @@ class AudioAutoencoder:
 			return True
 		return self.__check_md5(fpath, md5)
 	
-	def __reshape_audio(self, audio, row_len=128):
+	def __reshape_audio(self, audio, row_len=(256)):
 		if not isinstance(audio, torch.Tensor):
 			audio = torch.tensor(audio, dtype=torch.float32)
 		
-		audio = audio.reshape((-1, row_len)).T
+		audio = audio.numpy()
+		audio = block_average(audio, 16)
+
+		num_channels = row_len
+		signal_len = 3
+		required_size = num_channels * signal_len
+		if len(audio) < required_size:
+			audio = np.pad(audio, (0, required_size - len(audio)), mode='constant')
+		else:
+			audio = audio[:required_size]
+
+		# total_size = target_shape[0] * target_shape[1]
+		# audio = audio[:total_size]
+		
+		audio = audio.reshape((num_channels, signal_len))
+		# audio = audio.T
+
+		audio = torch.tensor(audio, dtype=torch.float32)
 		return audio
 	
 	def __gen_datasets(self):
@@ -279,7 +301,7 @@ class AudioAutoencoder:
 				print(type(self.data))
 			else:
 				train_files, train_labels, eval_files, eval_labels = dataset_generator(target_dir)
-				train_data = list_to_vector_array(train_files, target_size=(128, 128))
+				train_data = list_to_vector_array(train_files, target_size=(256, 3))
 
 				if self.d_type == "train":
 					self.data = train_data
@@ -292,7 +314,7 @@ class AudioAutoencoder:
 					eval_data = []
 					for num, file_path in tqdm(enumerate(eval_files), total=len(eval_files)):
 						try:
-							data = file_to_vector_array(file_path, target_size=(128, 128))
+							data = file_to_vector_array(file_path, target_size=(256, 3))
 							eval_data.append(data)
 						except:
 							print("File broken!!: {}".format(file_path))
@@ -330,11 +352,12 @@ class AudioAutoencoder:
 		if not self.save_unquantized:
 			inp /= 256
 
-		inp = inp.numpy()
+		inp = inp.numpy().astype('float32')
 
-		if self.transform is not None:
-			inp = self.transform(inp)
+		# if self.transform is not None:
+		# 	inp = self.transform(inp)
 		inp = torch.tensor(inp, dtype=torch.float32)
+		target = torch.tensor(target, dtype=torch.float32)
 
 		return inp, target
 
@@ -378,7 +401,7 @@ def demux_wav(wav_name, channel=0):
 	except ValueError as msg:
 		print(f'{msg}')
 
-def file_to_vector_array(file_path, target_size=(128, 128)):
+def file_to_vector_array(file_path, target_size=(256, 3)):
 	audio, sr = librosa.load(file_path, sr=None)
 
 	num_samples = target_size[0] * target_size[1]
@@ -387,12 +410,12 @@ def file_to_vector_array(file_path, target_size=(128, 128)):
 	else:
 		audio = audio[:num_samples]
 
-	audio = audio.reshape(target_size)
+	audio = audio.reshape(target_size).astype(np.float32)
 	return audio
 
-def list_to_vector_array(file_list, msg="calc...", target_size=(128, 128)):
+def list_to_vector_array(file_list, msg="calc...", target_size=(256, 3)):
 	vectors = [file_to_vector_array(file, target_size) for file in file_list]
-	return np.array(vectors)
+	return np.array(vectors, dtype=np.float32)
 	
 def save_pickle(filename, save_data):
 	print("save_pickle -> {}".format(filename))
@@ -447,7 +470,7 @@ def get_datasets(data, load_train=True, load_test=True, dataset_name='OneClass',
 datasets = [
 	{
 		'name': 'AudioAutoencoder',
-		'input': (128, 128),
+		'input': (256, 3),
 		'output': AudioAutoencoder.dataset_dict['OneClass'],
 		'weight': (1, 1),
 		'loader': get_datasets,
